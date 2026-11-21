@@ -1,0 +1,116 @@
+# 定制 IPA 云端编译：源码已预装优化版跳广告插件，此处只负责编译+发布
+name: Build Custom Swipt IPA (prebundled ad-skip)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: custom-ipa
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # 允许创建 Release 并上传 IPA
+
+env:
+  XCODEBUILD_FLAGS: -clonedSourcePackagesDirPath ${{ runner.temp }}/SourcePackages
+
+jobs:
+  build_ipa:
+    name: Build iOS IPA with bundled swiplet
+    runs-on: xcode-27
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Select stable Xcode
+        run: .github/select_xcode.sh
+
+      - name: Get Go version
+        id: go
+        run: echo "version=$(sed -n 's/^go //p' go.mod)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          cache: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ hashFiles('go.sum') }}
+
+      - name: Build LibSwipt (iOS arm64)
+        run: go run ./internal/cmd/build_libswipt -target ios/arm64
+
+      - name: Install JS dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Set up React Native frameworks
+        run: bun dev frameworks
+
+      - name: Cache Swift compilation
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/CompilationCache
+          key: swift-ios-${{ hashFiles('Swipt/**', 'bun.lock') }}
+          restore-keys: swift-ios-
+
+      - name: Build archive + IPA
+        env:
+          COMPILATION_CACHE_ENABLE_CACHING: YES
+          COMPILATION_CACHE_CAS_PATH: ${{ runner.temp }}/CompilationCache
+          COMPILATION_CACHE_LIMIT_SIZE: 2G
+        run: make archive_ios_ipa XCODEBUILD_FLAGS="$XCODEBUILD_FLAGS"
+
+      - name: Verify bundled swiplet inside IPA
+        run: |
+          IPA=build/Swipt.ipa
+          test -f "$IPA" || { echo "IPA not found"; exit 1; }
+          unzip -l "$IPA" | grep -i "BundledSkipAds.swiplet" && echo "OK: bundled swiplet present" || { echo "ERROR: bundled swiplet missing"; exit 1; }
+          ls -lh "$IPA"
+
+      - name: Write metadata
+        run: |
+          INFO_PLIST=build/Swipt-iOS.xcarchive/Products/Applications/Swipt.app/Info.plist
+          VERSION=$(plutil -extract CFBundleShortVersionString raw "$INFO_PLIST")
+          BUILD=$(plutil -extract CFBundleVersion raw "$INFO_PLIST")
+          printf 'version=%s build=%s\n' "$VERSION" "$BUILD" > build/metadata.txt
+          cat build/metadata.txt
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Swipt-custom-IPA
+          path: |
+            build/Swipt.ipa
+            build/metadata.txt
+          if-no-files-found: error
+
+      - name: Publish IPA as Release (for easy download)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: custom-ipa
+          name: Custom Swipt IPA (prebundled ad-skip)
+          body: "Auto-built IPA with prebundled optimized skip-ads swiplet (rules speedup + AI mode + API). This is an UNSIGNED IPA for sideloading."
+          files: |
+            build/Swipt.ipa
+            build/metadata.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
