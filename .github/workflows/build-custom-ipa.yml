@@ -3,8 +3,6 @@ name: Build Custom Swipt IPA (prebundled ad-skip)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 concurrency:
   group: custom-ipa
@@ -12,9 +10,6 @@ concurrency:
 
 permissions:
   contents: write   # 允许创建 Release 并上传 IPA
-
-env:
-  XCODEBUILD_FLAGS: -clonedSourcePackagesDirPath ${{ runner.temp }}/SourcePackages
 
 jobs:
   build_ipa:
@@ -77,7 +72,7 @@ jobs:
           COMPILATION_CACHE_ENABLE_CACHING: YES
           COMPILATION_CACHE_CAS_PATH: ${{ runner.temp }}/CompilationCache
           COMPILATION_CACHE_LIMIT_SIZE: 2G
-        run: make archive_ios_ipa XCODEBUILD_FLAGS="$XCODEBUILD_FLAGS"
+        run: make archive_ios_ipa XCODEBUILD_FLAGS="-clonedSourcePackagesDirPath ${{ runner.temp }}/SourcePackages"
 
       - name: Verify bundled swiplet inside IPA
         run: |
