@@ -23,7 +23,7 @@ jobs:
           submodules: true
 
       - name: Select stable Xcode
-        run: .github/select_xcode.sh
+        run: bash .github/select_xcode.sh
 
       - name: Get Go version
         id: go
